@@ -1,0 +1,5 @@
+{
+  "name": "Product Auto-Release System",
+  "description": "A system to help Product Managers quickly generate release notes, infographics, and emails for product iterations.",
+  "requestFramePermissions": []
+}

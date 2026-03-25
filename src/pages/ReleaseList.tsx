@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { useAppContext, Release } from '../store';
 import { Button, Card, CardContent, Badge, Input } from '../components/ui';
-import { Plus, Edit, Trash2, FileText, ArrowLeft, Search, Users, Activity, Ban, Eye, Send } from 'lucide-react';
+import { Plus, Edit, Trash2, FileText, ArrowLeft, Search, Users, Activity, Ban, Eye, Send, Copy } from 'lucide-react';
 
 export const ReleaseList: React.FC = () => {
-  const { releases, currentTeam, setCurrentView, setEditingRelease, deleteRelease, updateRelease } = useAppContext();
+  const { releases, currentTeam, setCurrentView, setEditingRelease, deleteRelease, updateRelease, addRelease, setCopyingRelease } = useAppContext();
   const [searchTerm, setSearchTerm] = useState('');
 
   const teamReleases = currentTeam 
@@ -21,33 +21,94 @@ export const ReleaseList: React.FC = () => {
 
   const handleCreate = () => {
     setEditingRelease(null);
+    setCopyingRelease(null);
     setCurrentView('wizard');
   };
 
+  const [releaseToVoid, setReleaseToVoid] = useState<Release | null>(null);
+  const [releaseToPublish, setReleaseToPublish] = useState<Release | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
+
   const handleEdit = (release: Release) => {
     setEditingRelease(release);
+    setCopyingRelease(null);
     setCurrentView('wizard');
   };
 
   const handleView = (release: Release) => {
     setEditingRelease(release);
+    setCopyingRelease(null);
     setCurrentView('wizard');
   };
 
   const handlePublish = (release: Release) => {
-    updateRelease({ ...release, status: '已发布' });
+    const isFormValid = release.versionNumber.trim() && 
+      release.features.length > 0 &&
+      release.features.every(f => f.name.trim() && f.module.trim() && f.description.trim() && f.screenshots && f.screenshots.length > 0);
+    
+    if (!isFormValid) {
+      setValidationError('该版本存在未填写的必填项（如版本号、功能名称、模块、描述或截图），请先编辑完善后再发布。');
+      return;
+    }
+    
+    const isVersionConflict = releases.some(r => 
+      r.scrumTeam === release.scrumTeam && 
+      r.versionNumber.trim().toLowerCase() === release.versionNumber.trim().toLowerCase() && 
+      r.id !== release.id && 
+      r.status !== '已作废'
+    );
+
+    if (isVersionConflict) {
+      setValidationError('该版本号已存在，请修改后再发布。');
+      return;
+    }
+
+    setReleaseToPublish(release);
+  };
+
+  const confirmPublishRelease = () => {
+    if (releaseToPublish) {
+      updateRelease({ ...releaseToPublish, status: '已发布' });
+      setReleaseToPublish(null);
+    }
+  };
+
+  const handleCopy = (release: Release) => {
+    const newRelease: Release = {
+      ...release,
+      id: Math.random().toString(36).substr(2, 9),
+      versionNumber: `${release.versionNumber} (副本)`,
+      status: '草稿',
+      createdAt: new Date().toISOString(),
+      features: release.features.map(f => ({
+        ...f,
+        id: Math.random().toString(36).substr(2, 9)
+      }))
+    };
+    setEditingRelease(null);
+    setCopyingRelease(newRelease);
+    setCurrentView('wizard');
   };
 
   const handleVoid = (release: Release) => {
-    if (window.confirm(`确定要作废版本 ${release.versionNumber} 吗？作废后不可恢复。`)) {
-      updateRelease({ ...release, status: '已作废' });
+    setReleaseToVoid(release);
+  };
+
+  const confirmVoidRelease = () => {
+    if (releaseToVoid) {
+      updateRelease({ ...releaseToVoid, status: '已作废' });
+      setReleaseToVoid(null);
     }
   };
+
+  const lastRelease = teamReleases.filter(r => r.status === '已发布').length > 0 
+    ? [...teamReleases].filter(r => r.status === '已发布').sort((a, b) => new Date(b.releaseDate).getTime() - new Date(a.releaseDate).getTime())[0]
+    : null;
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
       <div className="mb-6">
-        <Button variant="ghost" size="sm" onClick={() => setCurrentView('teams')} className="gap-2 text-gray-500 hover:text-gray-900 -ml-3">
+        <Button variant="ghost" size="sm" onClick={() => { setCopyingRelease(null); setCurrentView('teams'); }} className="gap-2 text-gray-500 hover:text-gray-900 -ml-3">
           <ArrowLeft className="w-4 h-4" /> 返回团队列表
         </Button>
       </div>
@@ -70,17 +131,17 @@ export const ReleaseList: React.FC = () => {
             
             <div className="flex items-center gap-6 mt-4 text-sm">
               <div className="flex items-center gap-2 text-gray-500">
-                <span className="font-medium text-gray-700">总迭代数:</span> 
-                {teamReleases.length}
+                <span className="font-medium text-gray-700">总发布迭代数:</span> 
+                {teamReleases.filter(r => r.status === '已发布').length}
               </div>
               <div className="flex items-center gap-2 text-gray-500">
-                <span className="font-medium text-gray-700">最近上线:</span> 
-                {teamReleases.length > 0 ? (
+                <span className="font-medium text-gray-700">最近发布:</span> 
+                {lastRelease ? (
                   <span className="flex items-center gap-1">
                     <Activity className="w-3.5 h-3.5 text-green-500" />
-                    {[...teamReleases].sort((a, b) => new Date(b.releaseDate).getTime() - new Date(a.releaseDate).getTime())[0].releaseDate}
+                    {lastRelease.releaseDate} ({lastRelease.versionNumber})
                   </span>
-                ) : '暂无发布'}
+                ) : '-'}
               </div>
             </div>
           </div>
@@ -118,6 +179,7 @@ export const ReleaseList: React.FC = () => {
                 <tr className="border-b border-gray-200 bg-gray-50/50">
                   <th className="px-6 py-4 text-sm font-semibold text-gray-900">版本号</th>
                   <th className="px-6 py-4 text-sm font-semibold text-gray-900">状态</th>
+                  <th className="px-6 py-4 text-sm font-semibold text-gray-900">版本周期</th>
                   <th className="px-6 py-4 text-sm font-semibold text-gray-900">发布日期</th>
                   <th className="px-6 py-4 text-sm font-semibold text-gray-900">发布人</th>
                   <th className="px-6 py-4 text-sm font-semibold text-gray-900">功能数</th>
@@ -136,6 +198,9 @@ export const ReleaseList: React.FC = () => {
                         {release.status}
                       </Badge>
                     </td>
+                    <td className="px-6 py-4 text-gray-600 text-sm">
+                      {release.startDate || '-'} ~ {release.endDate || '-'}
+                    </td>
                     <td className="px-6 py-4 text-gray-600">{release.releaseDate}</td>
                     <td className="px-6 py-4 text-gray-600">{release.publisher || '-'}</td>
                     <td className="px-6 py-4 text-gray-600">{release.features.length}</td>
@@ -152,6 +217,9 @@ export const ReleaseList: React.FC = () => {
                             <Button variant="ghost" size="sm" onClick={() => handleEdit(release)} className="text-blue-600 hover:text-blue-700 hover:bg-blue-50" title="编辑">
                               <Edit className="w-4 h-4" />
                             </Button>
+                            <Button variant="ghost" size="sm" onClick={() => handleCopy(release)} className="text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50" title="复制">
+                              <Copy className="w-4 h-4" />
+                            </Button>
                             <Button variant="ghost" size="sm" onClick={() => deleteRelease(release.id)} className="text-red-600 hover:text-red-700 hover:bg-red-50" title="删除">
                               <Trash2 className="w-4 h-4" />
                             </Button>
@@ -162,15 +230,23 @@ export const ReleaseList: React.FC = () => {
                             <Button variant="ghost" size="sm" onClick={() => handleView(release)} className="text-blue-600 hover:text-blue-700 hover:bg-blue-50" title="查看">
                               <Eye className="w-4 h-4" />
                             </Button>
+                            <Button variant="ghost" size="sm" onClick={() => handleCopy(release)} className="text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50" title="复制">
+                              <Copy className="w-4 h-4" />
+                            </Button>
                             <Button variant="ghost" size="sm" onClick={() => handleVoid(release)} className="text-orange-600 hover:text-orange-700 hover:bg-orange-50" title="作废">
                               <Ban className="w-4 h-4" />
                             </Button>
                           </>
                         )}
                         {release.status === '已作废' && (
-                          <Button variant="ghost" size="sm" onClick={() => handleView(release)} className="text-gray-600 hover:text-gray-700 hover:bg-gray-50" title="查看详情">
-                            <Eye className="w-4 h-4" />
-                          </Button>
+                          <>
+                            <Button variant="ghost" size="sm" onClick={() => handleView(release)} className="text-gray-600 hover:text-gray-700 hover:bg-gray-50" title="查看详情">
+                              <Eye className="w-4 h-4" />
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => handleCopy(release)} className="text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50" title="复制">
+                              <Copy className="w-4 h-4" />
+                            </Button>
+                          </>
                         )}
                       </div>
                     </td>
@@ -181,6 +257,44 @@ export const ReleaseList: React.FC = () => {
           </div>
         )}
       </div>
+
+      {releaseToVoid && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <h2 className="text-xl font-bold mb-2 text-gray-900">确认作废</h2>
+            <p className="text-gray-600 mb-6">确定要作废版本 {releaseToVoid.versionNumber} 吗？作废后不可恢复。</p>
+            <div className="flex justify-end gap-3">
+              <Button variant="outline" onClick={() => setReleaseToVoid(null)}>取消</Button>
+              <Button variant="destructive" onClick={confirmVoidRelease}>确认作废</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {releaseToPublish && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <h2 className="text-xl font-bold mb-2 text-gray-900">确认发布</h2>
+            <p className="text-gray-600 mb-6">确定要发布版本 {releaseToPublish.versionNumber} 吗？发布后将无法再修改内容。</p>
+            <div className="flex justify-end gap-3">
+              <Button variant="outline" onClick={() => setReleaseToPublish(null)}>取消</Button>
+              <Button onClick={confirmPublishRelease}>确认发布</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {validationError && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <h2 className="text-xl font-bold mb-2 text-red-600">无法发布</h2>
+            <p className="text-gray-600 mb-6">{validationError}</p>
+            <div className="flex justify-end">
+              <Button onClick={() => setValidationError(null)}>我知道了</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

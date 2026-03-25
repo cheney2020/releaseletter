@@ -8,6 +8,7 @@ export const TeamList: React.FC = () => {
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTeam, setEditingTeam] = useState<Team | null>(null);
+  const [teamToDelete, setTeamToDelete] = useState<string | null>(null);
   const [formData, setFormData] = useState({ name: '', code: '', description: '' });
 
   const handleEnterTeam = (team: Team) => {
@@ -42,8 +43,13 @@ export const TeamList: React.FC = () => {
 
   const handleDeleteTeam = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (window.confirm('确定要删除该团队吗？')) {
-      deleteTeam(id);
+    setTeamToDelete(id);
+  };
+
+  const confirmDeleteTeam = () => {
+    if (teamToDelete) {
+      deleteTeam(teamToDelete);
+      setTeamToDelete(null);
     }
   };
 
@@ -65,10 +71,10 @@ export const TeamList: React.FC = () => {
           const teamReleases = releases.filter(r => r.scrumTeam === team.name);
           const publishedReleases = teamReleases.filter(r => r.status === '已发布');
           
-          // Find the most recent release date
-          const lastReleaseDate = publishedReleases.length > 0 
-            ? publishedReleases.sort((a, b) => new Date(b.releaseDate).getTime() - new Date(a.releaseDate).getTime())[0].releaseDate
-            : '暂无发布';
+          // Find the most recent release
+          const lastRelease = publishedReleases.length > 0 
+            ? publishedReleases.sort((a, b) => new Date(b.releaseDate).getTime() - new Date(a.releaseDate).getTime())[0]
+            : null;
 
           return (
             <Card key={team.id} className="hover:shadow-md transition-shadow flex flex-col h-full">
@@ -99,14 +105,18 @@ export const TeamList: React.FC = () => {
                 
                 <div className="grid grid-cols-2 gap-4 mb-6 bg-gray-50 p-3 rounded-lg border border-gray-100">
                   <div>
-                    <div className="text-xs text-gray-500 mb-1">总迭代数</div>
-                    <div className="font-semibold text-gray-900">{teamReleases.length}</div>
+                    <div className="text-xs text-gray-500 mb-1">总发布迭代数</div>
+                    <div className="font-semibold text-gray-900">{teamReleases.filter(r => r.status === '已发布').length}</div>
                   </div>
                   <div>
-                    <div className="text-xs text-gray-500 mb-1">最近上线</div>
+                    <div className="text-xs text-gray-500 mb-1">最近发布</div>
                     <div className="font-semibold text-gray-900 text-sm flex items-center gap-1">
-                      <Activity className="w-3 h-3 text-green-500" />
-                      {lastReleaseDate}
+                      {lastRelease ? (
+                        <>
+                          <Activity className="w-3 h-3 text-green-500" />
+                          {lastRelease.releaseDate} ({lastRelease.versionNumber})
+                        </>
+                      ) : '-'}
                     </div>
                   </div>
                 </div>
@@ -158,6 +168,19 @@ export const TeamList: React.FC = () => {
             <div className="flex justify-end gap-3 mt-6">
               <Button variant="outline" onClick={() => setIsModalOpen(false)}>取消</Button>
               <Button onClick={handleSaveTeam} disabled={!formData.name || !formData.code}>保存</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {teamToDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <h2 className="text-xl font-bold mb-2 text-gray-900">确认删除</h2>
+            <p className="text-gray-600 mb-6">确定要删除该团队吗？此操作无法撤销。</p>
+            <div className="flex justify-end gap-3">
+              <Button variant="outline" onClick={() => setTeamToDelete(null)}>取消</Button>
+              <Button variant="destructive" onClick={confirmDeleteTeam}>确认删除</Button>
             </div>
           </div>
         </div>

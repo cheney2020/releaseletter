@@ -8,26 +8,52 @@ import { GoogleGenAI } from "@google/genai";
 const APP_OPTIONS = ['CDP', 'FAST', 'SPP', 'MDIC', 'DOP', '投放主数据'];
 
 export const ReleaseWizard: React.FC = () => {
-  const { currentTeam, setCurrentView, editingRelease, addRelease, updateRelease, releases } = useAppContext();
+  const { currentTeam, setCurrentView, editingRelease, copyingRelease, setCopyingRelease, addRelease, updateRelease, releases } = useAppContext();
   
-  const [release, setRelease] = useState<Release>(editingRelease || {
-    id: Math.random().toString(36).substr(2, 9),
-    scrumTeam: currentTeam?.name || '增长组',
-    versionNumber: '',
-    startDate: new Date().toISOString().split('T')[0],
-    endDate: new Date().toISOString().split('T')[0],
-    releaseDate: new Date().toISOString().split('T')[0],
-    publisher: '',
-    summary: '',
-    features: [],
-    status: '草稿',
-    createdAt: new Date().toISOString()
+  const [release, setRelease] = useState<Release>(() => {
+    const savedDraft = localStorage.getItem('wizardDraft');
+    if (savedDraft) {
+      try {
+        const parsed = JSON.parse(savedDraft);
+        // Only use draft if it matches the current editing/copying intent
+        if (
+          (editingRelease && parsed.id === editingRelease.id) ||
+          (copyingRelease && parsed.id === copyingRelease.id) ||
+          (!editingRelease && !copyingRelease) // New release draft
+        ) {
+          return parsed;
+        }
+      } catch (e) {
+        console.error('Failed to parse wizard draft', e);
+      }
+    }
+    return editingRelease || copyingRelease || {
+      id: Math.random().toString(36).substr(2, 9),
+      scrumTeam: currentTeam?.name || '增长组',
+      versionNumber: '',
+      startDate: new Date().toISOString().split('T')[0],
+      endDate: new Date().toISOString().split('T')[0],
+      releaseDate: new Date().toISOString().split('T')[0],
+      publisher: '',
+      summary: '',
+      features: [],
+      status: '草稿',
+      createdAt: new Date().toISOString()
+    };
   });
+
+  useEffect(() => {
+    localStorage.setItem('wizardDraft', JSON.stringify(release));
+  }, [release]);
+
+  // Clear draft when saving/publishing/leaving
+  const clearDraft = () => localStorage.removeItem('wizardDraft');
 
   const [activeAnchor, setActiveAnchor] = useState('basic-info');
   const [expandedFeatures, setExpandedFeatures] = useState<Record<string, boolean>>({});
   const [showAppSelector, setShowAppSelector] = useState(false);
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
   const [draggedFeatureId, setDraggedFeatureId] = useState<string | null>(null);
   
   const infographicRef = useRef<HTMLDivElement>(null);
@@ -57,8 +83,8 @@ export const ReleaseWizard: React.FC = () => {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
       
       const prompt = `
-        请根据以下产品迭代功能列表，生成一句简短的迭代概述（不超过50个字），用于发布说明的开头。
-        要求：突出核心价值，语气专业、积极。
+        请根据以下产品迭代功能列表，生成一句简短的迭代概述，用于发布说明的开头。
+        要求：突出核心价值，语气专业、积极。字数严格控制在50字以内，直接返回概述文本，不要任何多余的解释。
         
         功能列表：
         ${release.features.map(f => `- [${f.appName}] ${f.name} (${f.featureType}): ${f.description}`).join('\n')}
@@ -79,16 +105,41 @@ export const ReleaseWizard: React.FC = () => {
     }
   };
 
+  const isFormValid = release.versionNumber.trim() && 
+    release.features.length > 0 &&
+    release.features.every(f => f.name.trim() && f.module.trim() && f.description.trim() && f.screenshots && f.screenshots.length > 0);
+
   const handleSaveDraft = () => {
+    if (isVersionConflict) return;
     if (editingRelease) updateRelease({ ...release, status: '草稿' });
     else addRelease({ ...release, status: '草稿' });
+    setCopyingRelease(null);
+    clearDraft();
     setCurrentView('list');
   };
 
-  const handlePublish = () => {
+  const handlePublishClick = () => {
+    if (isVersionConflict || !isFormValid) return;
+    setIsPublishModalOpen(true);
+  };
+
+  const confirmPublish = () => {
     if (editingRelease) updateRelease({ ...release, status: '已发布' });
     else addRelease({ ...release, status: '已发布' });
+    setCopyingRelease(null);
+    clearDraft();
     setCurrentView('list');
+    setIsPublishModalOpen(false);
+  };
+
+  const getFeatureTypeVariant = (type: string, isSelected: boolean = true) => {
+    if (!isSelected) return 'outline';
+    switch (type) {
+      case '新功能': return 'success';
+      case '功能优化': return 'warning';
+      case 'Bug修复': return 'destructive';
+      default: return 'default';
+    }
   };
 
   const handleDownload = async () => {
@@ -111,7 +162,6 @@ export const ReleaseWizard: React.FC = () => {
       name: '',
       appName,
       module: '',
-      valueLevel: '中',
       description: '',
       screenshots: [],
       targetUsers: [],
@@ -129,7 +179,6 @@ export const ReleaseWizard: React.FC = () => {
       name: '',
       appName,
       module: '',
-      valueLevel: '中',
       description: '',
       screenshots: [],
       targetUsers: [],
@@ -256,12 +305,12 @@ export const ReleaseWizard: React.FC = () => {
       {/* Top Header */}
       <header className="h-14 bg-white border-b border-gray-200 px-6 flex items-center justify-between shrink-0 z-20">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="sm" onClick={() => setCurrentView('list')} className="gap-2 text-gray-500 hover:text-gray-900">
+          <Button variant="ghost" size="sm" onClick={() => { clearDraft(); setCopyingRelease(null); setCurrentView('list'); }} className="gap-2 text-gray-500 hover:text-gray-900">
             <ArrowLeft className="w-4 h-4" /> 返回
           </Button>
           <div className="h-4 w-px bg-gray-300"></div>
           <h1 className="text-lg font-semibold text-gray-900">
-            {editingRelease ? '编辑迭代发布' : '新建迭代发布'}
+            {editingRelease ? '编辑迭代发布' : copyingRelease ? '复制迭代发布' : '新建迭代发布'}
           </h1>
           <Badge variant={release.status === '已发布' ? 'success' : 'secondary'} className="ml-2">
             {release.status}
@@ -273,7 +322,7 @@ export const ReleaseWizard: React.FC = () => {
               <Button variant="outline" size="sm" onClick={handleSaveDraft} className="gap-2" disabled={isVersionConflict || !release.versionNumber.trim()}>
                 <Save className="w-4 h-4" /> 保存草稿
               </Button>
-              <Button size="sm" onClick={handlePublish} className="gap-2" disabled={isVersionConflict || !release.versionNumber.trim()}>
+              <Button size="sm" onClick={handlePublishClick} className="gap-2" disabled={isVersionConflict || !isFormValid}>
                 <Send className="w-4 h-4" /> 发布
               </Button>
             </>
@@ -421,17 +470,17 @@ export const ReleaseWizard: React.FC = () => {
                   <div className="text-2xl font-bold text-gray-900">{addedApps.length}</div>
                   <div className="text-xs text-gray-500 mt-1">涉及应用</div>
                 </div>
-                <div className="bg-red-50 p-4 rounded-lg border border-red-100 text-center">
-                  <div className="text-2xl font-bold text-[#DA291C]">{newCount}</div>
-                  <div className="text-xs text-red-700 mt-1">新功能</div>
-                </div>
-                <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-100 text-center">
-                  <div className="text-2xl font-bold text-yellow-700">{optCount}</div>
-                  <div className="text-xs text-yellow-800 mt-1">功能优化</div>
-                </div>
                 <div className="bg-green-50 p-4 rounded-lg border border-green-100 text-center">
-                  <div className="text-2xl font-bold text-green-600">{bugCount}</div>
-                  <div className="text-xs text-green-700 mt-1">Bug修复</div>
+                  <div className="text-2xl font-bold text-green-600">{newCount}</div>
+                  <div className="text-xs text-green-700 mt-1">新功能</div>
+                </div>
+                <div className="bg-orange-50 p-4 rounded-lg border border-orange-100 text-center">
+                  <div className="text-2xl font-bold text-orange-600">{optCount}</div>
+                  <div className="text-xs text-orange-700 mt-1">功能优化</div>
+                </div>
+                <div className="bg-red-50 p-4 rounded-lg border border-red-100 text-center">
+                  <div className="text-2xl font-bold text-red-600">{bugCount}</div>
+                  <div className="text-xs text-red-700 mt-1">Bug修复</div>
                 </div>
               </div>
             </section>
@@ -497,8 +546,7 @@ export const ReleaseWizard: React.FC = () => {
                                 </div>
                                 <div className="flex gap-2 shrink-0">
                                   {feature.module && <Badge variant="secondary">{feature.module}</Badge>}
-                                  <Badge variant={feature.featureType === '新功能' ? 'default' : 'outline'}>{feature.featureType}</Badge>
-                                  <Badge variant={feature.valueLevel === '高' ? 'destructive' : feature.valueLevel === '中' ? 'warning' : 'success'}>{feature.valueLevel}价值</Badge>
+                                  <Badge variant={getFeatureTypeVariant(feature.featureType)}>{feature.featureType}</Badge>
                                 </div>
                               </div>
                               <div className="flex items-center gap-1 ml-4" onClick={e => e.stopPropagation()}>
@@ -533,33 +581,18 @@ export const ReleaseWizard: React.FC = () => {
                                         <Input value={feature.module} onChange={e => updateFeature(feature.id, 'module', e.target.value)} placeholder="例如：首页、订单" />
                                       </div>
                                     </div>
-                                    <div className="grid grid-cols-2 gap-4">
+                                    <div className="grid grid-cols-1 gap-4">
                                       <div className="space-y-2">
                                         <Label>功能类型 <span className="text-red-500">*</span></Label>
                                         <div className="flex gap-2">
                                           {['新功能', '功能优化', 'Bug修复'].map(type => (
                                             <Badge
                                               key={type}
-                                              variant={feature.featureType === type ? 'default' : 'outline'}
+                                              variant={getFeatureTypeVariant(type, feature.featureType === type)}
                                               className={isReadOnly ? "cursor-default opacity-70" : "cursor-pointer"}
                                               onClick={() => !isReadOnly && updateFeature(feature.id, 'featureType', type)}
                                             >
                                               {type}
-                                            </Badge>
-                                          ))}
-                                        </div>
-                                      </div>
-                                      <div className="space-y-2">
-                                        <Label>功能价值 <span className="text-red-500">*</span></Label>
-                                        <div className="flex gap-2">
-                                          {['高', '中', '低'].map(level => (
-                                            <Badge
-                                              key={level}
-                                              variant={feature.valueLevel === level ? (level === '高' ? 'destructive' : level === '中' ? 'warning' : 'success') : 'outline'}
-                                              className={isReadOnly ? "cursor-default opacity-70" : "cursor-pointer"}
-                                              onClick={() => !isReadOnly && updateFeature(feature.id, 'valueLevel', level)}
-                                            >
-                                              {level}
                                             </Badge>
                                           ))}
                                         </div>
@@ -576,11 +609,43 @@ export const ReleaseWizard: React.FC = () => {
                                   </div>
                                   
                                   <div className="space-y-2 h-full flex flex-col">
-                                    <Label>产品截图（选填）</Label>
-                                    <div className="flex-1 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center bg-white hover:bg-gray-50 transition-colors cursor-pointer p-4 text-center">
-                                      <ImageIcon className="w-8 h-8 text-gray-400 mb-2" />
-                                      <span className="text-sm text-gray-500 font-medium">点击上传图片</span>
-                                      <span className="text-xs text-gray-400 mt-1">支持 PNG, JPG，最大 5MB</span>
+                                    <Label>产品截图 <span className="text-red-500">*</span></Label>
+                                    <div className="flex-1 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center bg-white hover:bg-gray-50 transition-colors relative overflow-hidden p-4 text-center">
+                                      {feature.screenshots && feature.screenshots.length > 0 ? (
+                                        <div className="w-full h-full relative group flex items-center justify-center">
+                                          <img src={feature.screenshots[0]} alt="Screenshot" className="max-w-full max-h-full object-contain" />
+                                          {!isReadOnly && (
+                                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                              <Button variant="destructive" size="sm" onClick={(e) => { e.stopPropagation(); updateFeature(feature.id, 'screenshots', []); }}>
+                                                <Trash2 className="w-4 h-4 mr-2" /> 删除图片
+                                              </Button>
+                                            </div>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <>
+                                          <ImageIcon className="w-8 h-8 text-gray-400 mb-2" />
+                                          <span className="text-sm text-gray-500 font-medium">点击上传图片</span>
+                                          <span className="text-xs text-gray-400 mt-1">支持 PNG, JPG，最大 5MB</span>
+                                          {!isReadOnly && (
+                                            <input 
+                                              type="file" 
+                                              accept="image/png, image/jpeg" 
+                                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                              onChange={(e) => {
+                                                const file = e.target.files?.[0];
+                                                if (file) {
+                                                  const reader = new FileReader();
+                                                  reader.onloadend = () => {
+                                                    updateFeature(feature.id, 'screenshots', [reader.result as string]);
+                                                  };
+                                                  reader.readAsDataURL(file);
+                                                }
+                                              }}
+                                            />
+                                          )}
+                                        </>
+                                      )}
                                     </div>
                                   </div>
                                 </div>
@@ -671,7 +736,6 @@ export const ReleaseWizard: React.FC = () => {
                         <span className="bg-[#DA291C] text-white px-4 py-1.5 rounded-full text-sm font-bold tracking-wider uppercase shadow-sm">
                           {release.scrumTeam}
                         </span>
-                        <span className="text-gray-800 font-bold tracking-wider uppercase">产品迭代发布说明</span>
                       </div>
                       <h1 className="text-6xl font-black tracking-tight text-gray-900 drop-shadow-sm">{release.versionNumber || '未命名版本'}</h1>
                     </div>
@@ -735,9 +799,12 @@ export const ReleaseWizard: React.FC = () => {
                             <div className={`p-6 grid gap-6 ${features.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
                               {features.map(feature => (
                                 <div key={feature.id} className="flex gap-5">
-                                  {/* Placeholder for screenshot */}
                                   <div className="w-1/3 bg-gray-100 rounded-lg flex items-center justify-center shrink-0 border border-gray-200 overflow-hidden">
-                                    <ImageIcon className="w-10 h-10 text-gray-300" />
+                                    {feature.screenshots && feature.screenshots.length > 0 ? (
+                                      <img src={feature.screenshots[0]} alt="Screenshot" className="w-full h-full object-cover" />
+                                    ) : (
+                                      <ImageIcon className="w-10 h-10 text-gray-300" />
+                                    )}
                                   </div>
                                   <div className="flex-1 flex flex-col">
                                     <div className="flex items-start justify-between gap-2 mb-2">
@@ -745,18 +812,11 @@ export const ReleaseWizard: React.FC = () => {
                                     </div>
                                     <div className="flex gap-2 shrink-0 mb-2 flex-wrap">
                                       <span className={`px-2 py-0.5 text-xs font-bold rounded-md ${
-                                        feature.featureType === '新功能' ? 'bg-red-50 text-[#DA291C] border border-red-100' :
-                                        feature.featureType === '功能优化' ? 'bg-yellow-50 text-yellow-700 border border-yellow-100' :
-                                        'bg-green-50 text-green-700 border border-green-100'
+                                        feature.featureType === '新功能' ? 'bg-green-100 text-green-800 border border-green-200' :
+                                        feature.featureType === '功能优化' ? 'bg-orange-100 text-orange-800 border border-orange-200' :
+                                        'bg-red-100 text-red-800 border border-red-200'
                                       }`}>
                                         {feature.featureType}
-                                      </span>
-                                      <span className={`px-2 py-0.5 text-xs font-bold rounded-md ${
-                                        feature.valueLevel === '高' ? 'bg-[#DA291C] text-white' :
-                                        feature.valueLevel === '中' ? 'bg-[#FFC72C] text-gray-900' :
-                                        'bg-gray-200 text-gray-700'
-                                      }`}>
-                                        {feature.valueLevel}价值
                                       </span>
                                       {feature.targetUsers.length > 0 && (
                                         <span className="px-2 py-0.5 text-xs font-bold rounded-md bg-gray-100 text-gray-700 border border-gray-200">
@@ -787,7 +847,6 @@ export const ReleaseWizard: React.FC = () => {
                     <div className="w-8 h-8 bg-[#DA291C] rounded-md flex items-center justify-center text-white font-bold">P</div>
                     <span className="font-medium text-white tracking-wider">产品迭代自动发布系统</span>
                   </div>
-                  <div>扫描二维码或访问链接查看完整详情</div>
                 </div>
               </div>
             </div>
@@ -795,6 +854,19 @@ export const ReleaseWizard: React.FC = () => {
         </aside>
 
       </div>
+
+      {isPublishModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <h2 className="text-xl font-bold mb-2 text-gray-900">确认发布</h2>
+            <p className="text-gray-600 mb-6">确定要发布版本 {release.versionNumber} 吗？发布后将无法再修改内容。</p>
+            <div className="flex justify-end gap-3">
+              <Button variant="outline" onClick={() => setIsPublishModalOpen(false)}>取消</Button>
+              <Button onClick={confirmPublish}>确认发布</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

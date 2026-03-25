@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 
 export type Team = {
   id: string;
@@ -12,7 +12,6 @@ export type Feature = {
   appName: string;
   name: string;
   module: string;
-  valueLevel: '高' | '中' | '低';
   description: string;
   screenshots: string[];
   targetUsers: string[];
@@ -49,53 +48,119 @@ type AppContextType = {
   setCurrentView: (view: 'teams' | 'list' | 'wizard') => void;
   editingRelease: Release | null;
   setEditingRelease: (release: Release | null) => void;
+  copyingRelease: Release | null;
+  setCopyingRelease: (release: Release | null) => void;
 };
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [teams, setTeams] = useState<Team[]>([
-    { id: 't1', name: '增长组', code: 'GROWTH', description: '负责用户增长、拉新、留存等核心业务链路' },
-    { id: 't2', name: '商业化组', code: 'MONETIZATION', description: '负责广告投放、变现、会员订阅等商业化产品' },
-    { id: 't3', name: '基础架构组', code: 'INFRA', description: '负责底层架构、中间件、稳定性保障' },
-    { id: 't4', name: '数据组', code: 'DATA', description: '负责数据中台、BI报表、数据分析工具' }
-  ]);
-  const [currentTeam, setCurrentTeam] = useState<Team | null>(null);
+  const [teams, setTeams] = useState<Team[]>(() => {
+    const saved = localStorage.getItem('teams');
+    if (saved) return JSON.parse(saved);
+    return [
+      { id: 't1', name: '增长组', code: 'GROWTH', description: '负责用户增长、拉新、留存等核心业务链路' },
+      { id: 't2', name: '商业化组', code: 'MONETIZATION', description: '负责广告投放、变现、会员订阅等商业化产品' },
+      { id: 't3', name: '基础架构组', code: 'INFRA', description: '负责底层架构、中间件、稳定性保障' },
+      { id: 't4', name: '数据组', code: 'DATA', description: '负责数据中台、BI报表、数据分析工具' }
+    ];
+  });
+  const [currentTeam, setCurrentTeam] = useState<Team | null>(() => {
+    const saved = localStorage.getItem('currentTeamId');
+    if (saved) {
+      // Need to find the team from the initialized teams
+      const savedTeams = localStorage.getItem('teams');
+      const parsedTeams = savedTeams ? JSON.parse(savedTeams) : [
+        { id: 't1', name: '增长组', code: 'GROWTH', description: '负责用户增长、拉新、留存等核心业务链路' },
+        { id: 't2', name: '商业化组', code: 'MONETIZATION', description: '负责广告投放、变现、会员订阅等商业化产品' },
+        { id: 't3', name: '基础架构组', code: 'INFRA', description: '负责底层架构、中间件、稳定性保障' },
+        { id: 't4', name: '数据组', code: 'DATA', description: '负责数据中台、BI报表、数据分析工具' }
+      ];
+      return parsedTeams.find((t: Team) => t.id === saved) || null;
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    if (currentTeam) {
+      localStorage.setItem('currentTeamId', currentTeam.id);
+    } else {
+      localStorage.removeItem('currentTeamId');
+    }
+  }, [currentTeam]);
 
   const addTeam = (team: Team) => setTeams(prev => [...prev, team]);
   const updateTeam = (team: Team) => setTeams(prev => prev.map(t => t.id === team.id ? team : t));
-  const deleteTeam = (id: string) => setTeams(prev => prev.filter(t => t.id !== id));
+  const deleteTeam = (id: string) => {
+    setTeams(prev => prev.filter(t => t.id !== id));
+    setReleases(prev => prev.filter(r => r.scrumTeam !== teams.find(t => t.id === id)?.name));
+  };
 
-  const [releases, setReleases] = useState<Release[]>([
-    {
-      id: '1',
-      scrumTeam: '增长组',
-      versionNumber: 'v2.3.0',
-      startDate: '2026-01-27',
-      endDate: '2026-02-10',
-      releaseDate: '2026-02-10',
-      publisher: '张三',
-      summary: '春节大促核心版本，包含全新首页UI及性能优化。',
-      features: [
-        {
-          id: 'f1',
-          appName: 'CDP',
-          name: '大促活动横幅',
-          module: '首页',
-          valueLevel: '高',
-          description: '在首页顶部新增春节大促活动横幅，支持动态配置。',
-          screenshots: [],
-          targetUsers: ['用户'],
-          featureType: '新功能',
-          sortOrder: 1
-        }
-      ],
-      status: '已发布',
-      createdAt: new Date().toISOString()
-    }
-  ]);
-  const [currentView, setCurrentView] = useState<'teams' | 'list' | 'wizard'>('teams');
-  const [editingRelease, setEditingRelease] = useState<Release | null>(null);
+  const [releases, setReleases] = useState<Release[]>(() => {
+    const saved = localStorage.getItem('releases');
+    if (saved) return JSON.parse(saved);
+    return [
+      {
+        id: '1',
+        scrumTeam: '增长组',
+        versionNumber: 'v2.3.0',
+        startDate: '2026-01-27',
+        endDate: '2026-02-10',
+        releaseDate: '2026-02-10',
+        publisher: '张三',
+        summary: '春节大促核心版本，包含全新首页UI及性能优化。',
+        features: [
+          {
+            id: 'f1',
+            appName: 'CDP',
+            name: '大促活动横幅',
+            module: '首页',
+            description: '在首页顶部新增春节大促活动横幅，支持动态配置。',
+            screenshots: [],
+            targetUsers: ['用户'],
+            featureType: '新功能',
+            sortOrder: 1
+          }
+        ],
+        status: '已发布',
+        createdAt: new Date().toISOString()
+      }
+    ];
+  });
+  const [currentView, setCurrentView] = useState<'teams' | 'list' | 'wizard'>(() => {
+    const saved = localStorage.getItem('currentView');
+    return (saved as 'teams' | 'list' | 'wizard') || 'teams';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('currentView', currentView);
+  }, [currentView]);
+  const [editingRelease, setEditingRelease] = useState<Release | null>(() => {
+    const saved = localStorage.getItem('editingRelease');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [copyingRelease, setCopyingRelease] = useState<Release | null>(() => {
+    const saved = localStorage.getItem('copyingRelease');
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  useEffect(() => {
+    if (editingRelease) localStorage.setItem('editingRelease', JSON.stringify(editingRelease));
+    else localStorage.removeItem('editingRelease');
+  }, [editingRelease]);
+
+  useEffect(() => {
+    if (copyingRelease) localStorage.setItem('copyingRelease', JSON.stringify(copyingRelease));
+    else localStorage.removeItem('copyingRelease');
+  }, [copyingRelease]);
+
+  useEffect(() => {
+    localStorage.setItem('teams', JSON.stringify(teams));
+  }, [teams]);
+
+  useEffect(() => {
+    localStorage.setItem('releases', JSON.stringify(releases));
+  }, [releases]);
 
   const addRelease = (release: Release) => setReleases(prev => [release, ...prev]);
   const updateRelease = (release: Release) => setReleases(prev => prev.map(r => r.id === release.id ? release : r));
@@ -106,7 +171,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       teams, addTeam, updateTeam, deleteTeam, currentTeam, setCurrentTeam,
       releases, addRelease, updateRelease, deleteRelease, 
       currentView, setCurrentView, 
-      editingRelease, setEditingRelease 
+      editingRelease, setEditingRelease,
+      copyingRelease, setCopyingRelease
     }}>
       {children}
     </AppContext.Provider>
